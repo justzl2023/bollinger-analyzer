@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>布林通道分析器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #07080d;
+    --surface: #0e1018;
+    --surface2: #151822;
+    --border: #1e2234;
+    --border-light: #2a2f45;
+    --text: #e2e4ed;
+    --text-dim: #7a7f99;
+    --text-muted: #484d66;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.25);
+    --green: #22c55e;
+    --green-dim: rgba(34, 197, 94, 0.12);
+    --green-border: rgba(34, 197, 94, 0.25);
+    --red: #ef4444;
+    --red-dim: rgba(239, 68, 68, 0.12);
+    --red-border: rgba(239, 68, 68, 0.25);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245, 158, 11, 0.12);
+    --amber-border: rgba(245, 158, 11, 0.25);
+    --radius: 14px;
+    --radius-sm: 10px;
+    --font: 'Noto Sans TC', 'Sora', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Ambient glow */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -40%; left: -20%;
+    width: 140%; height: 80%;
+    background: radial-gradient(ellipse at 30% 50%, rgba(99,102,241,0.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 30%, rgba(139,92,246,0.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app { position: relative; z-index: 1; }
+
+  /* ── Header ── */
+  .header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(7,8,13,0.85);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border-bottom: 1px solid var(--border);
+  }
+  .header-inner {
+    max-width: 1100px; margin: 0 auto;
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .logo-group { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 42px; height: 42px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-weight: 700; font-size: 14px; color: #fff;
+    box-shadow: 0 4px 20px rgba(99,102,241,0.3);
+    animation: logoPulse 3s ease-in-out infinite;
+  }
+  @keyframes logoPulse {
+    0%,100% { box-shadow: 0 4px 20px rgba(99,102,241,0.3); }
+    50% { box-shadow: 0 4px 30px rgba(99,102,241,0.5); }
+  }
+  .logo-text h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+  .logo-text p { font-size: 11px; color: var(--text-muted); font-weight: 400; letter-spacing: 1px; text-transform: uppercase; }
+
+  .btn-reset {
+    font-size: 12px; color: var(--text-dim);
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 7px 16px; border-radius: 8px; cursor: pointer;
+    transition: all 0.2s;
+    display: none;
+  }
+  .btn-reset:hover { color: var(--text); border-color: var(--border-light); background: var(--surface2); }
+  .btn-reset.show { display: block; }
+
+  /* ── Main ── */
+  .main { max-width: 1100px; margin: 0 auto; padding: 32px 24px 60px; }
+
+  /* ── Upload Zone ── */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 20px;
+    padding: 80px 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+  }
+  .upload-zone::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(99,102,241,0.05) 0%, transparent 70%);
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .upload-zone:hover { border-color: var(--accent); }
+  .upload-zone:hover::before { opacity: 1; }
+  .upload-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(99,102,241,0.06);
+    transform: scale(1.005);
+  }
+  .upload-zone.dragover::before { opacity: 1; }
+  .upload-icon {
+    font-size: 56px; margin-bottom: 16px;
+    filter: drop-shadow(0 4px 12px rgba(99,102,241,0.3));
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%,100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+  .upload-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .upload-sub { font-size: 13px; color: var(--text-muted); }
+  .upload-formats {
+    margin-top: 20px;
+    display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
+  }
+  .upload-formats span {
+    font-family: var(--mono); font-size: 11px;
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 6px; color: var(--text-dim);
+  }
+  .file-input { display: none; }
+
+  /* ── Preview ── */
+  .preview-section { display: none; }
+  .preview-section.show { display: block; }
+  .preview-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .preview-card img {
+    width: 100%; max-height: 420px;
+    object-fit: contain; background: #000;
+    display: block;
+  }
+
+  .btn-analyze {
+    width: 100%; padding: 16px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff; font-size: 16px; font-weight: 700;
+    border: none; border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.25s;
+    box-shadow: 0 4px 24px rgba(99,102,241,0.35);
+    letter-spacing: 0.5px;
+  }
+  .btn-analyze:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 32px rgba(99,102,241,0.5);
+  }
+  .btn-analyze:active { transform: translateY(0); }
+
+  /* ── Loading ── */
+  .loading {
+    display: none;
+    text-align: center; padding: 60px 20px;
+  }
+  .loading.show { display: block; }
+  .spinner {
+    width: 44px; height: 44px; margin: 0 auto 20px;
+    border: 4px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading p { color: var(--text-dim); font-size: 14px; }
+  .loading .loading-dots::after {
+    content: '';
+    animation: dots 1.5s steps(4) infinite;
+  }
+  @keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+  }
+
+  /* ── Error ── */
+  .error-box {
+    display: none;
+    background: var(--red-dim); border: 1px solid var(--red-border);
+    border-radius: var(--radius-sm);
+    padding: 16px 20px; color: #fca5a5; font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .error-box.show { display: block; }
+
+  /* ── Results ── */
+  .results { display: none; }
+  .results.show { display: block; }
+
+  /* Recommendation Banner */
+  .rec-banner {
+    border-radius: var(--radius);
+    padding: 32px; text-align: center;
+    margin-bottom: 24px;
+    position: relative; overflow: hidden;
+  }
+  .rec-banner::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% 0%, rgba(255,255,255,0.06) 0%, transparent 60%);
+  }
+  .rec-banner.long { background: linear-gradient(135deg, #065f46, #047857, #059669); }
+  .rec-banner.short { background: linear-gradient(135deg, #7f1d1d, #991b1b, #b91c1c); }
+  .rec-banner.wait { background: linear-gradient(135deg, #78350f, #92400e, #b45309); }
+  .rec-icon { font-size: 40px; position: relative; }
+  .rec-label { font-size: 24px; font-weight: 800; margin-top: 10px; position: relative; letter-spacing: 1px; }
+  .rec-reason { font-size: 14px; opacity: 0.9; margin-top: 8px; position: relative; max-width: 600px; margin-left: auto; margin-right: auto; }
+
+  /* Summary Card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .card-label {
+    font-size: 12px; font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 12px;
+  }
+  .card p { font-size: 14px; color: var(--text); line-height: 1.7; }
+  .card .dim { color: var(--text-dim); margin-top: 8px; }
+
+  /* Trade Cards Grid */
+  .trade-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 700px) { .trade-grid { grid-template-columns: 1fr; } }
+
+  .trade-card {
+    border-radius: var(--radius);
+    padding: 24px;
+    border: 1px solid;
+  }
+  .trade-card.long-card {
+    background: var(--green-dim);
+    border-color: var(--green-border);
+  }
+  .trade-card.short-card {
+    background: var(--red-dim);
+    border-color: var(--red-border);
+  }
+
+  .trade-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .trade-title-group { display: flex; align-items: center; gap: 10px; }
+  .trade-icon { font-size: 22px; }
+  .trade-title { font-size: 17px; font-weight: 700; }
+  .trade-card.long-card .trade-title { color: var(--green); }
+  .trade-card.short-card .trade-title { color: var(--red); }
+
+  .signal-badge {
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: 20px;
+    color: #fff;
+  }
+  .signal-badge.s-strong { background: var(--green); }
+  .signal-badge.s-mid { background: var(--amber); }
+  .signal-badge.s-weak { background: var(--red); }
+
+  /* Probability */
+  .prob-row {
+    display: flex; justify-content: space-between;
+    font-size: 13px; margin-bottom: 6px;
+  }
+  .prob-label { color: var(--text-dim); }
+  .prob-value { font-weight: 700; font-family: var(--mono); }
+  .trade-card.long-card .prob-value { color: var(--green); }
+  .trade-card.short-card .prob-value { color: var(--red); }
+
+  .prob-bar {
+    width: 100%; height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px; overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .prob-fill {
+    height: 100%; border-radius: 4px;
+    transition: width 1s ease;
+  }
+  .trade-card.long-card .prob-fill { background: var(--green); }
+  .trade-card.short-card .prob-fill { background: var(--red); }
+
+  /* Info Grid */
+  .info-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin-bottom: 16px;
+  }
+  .info-cell {
+    background: rgba(0,0,0,0.25);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+  }
+  .info-cell .label {
+    font-size: 11px; color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .info-cell .value {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    font-family: var(--mono);
+    word-break: break-all;
+  }
+  .info-cell .value.defense { color: var(--amber); }
+
+  .rr-box {
+    background: rgba(0,0,0,0.2);
+    border-radius: var(--radius-sm);
+    padding: 12px; margin-bottom: 14px;
+  }
+  .rr-box .label { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+  .rr-box .value { font-size: 14px; font-weight: 700; color: var(--text); font-family: var(--mono); }
+
+  .trade-reasoning { font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+
+  /* Key Levels */
+  .levels-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+  .level-tag {
+    font-family: var(--mono); font-size: 13px; font-weight: 500;
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.2);
+    color: #a5b4fc;
+    padding: 6px 14px; border-radius: 8px;
+  }
+
+  /* Warnings */
+  .warning-card {
+    background: var(--amber-dim);
+    border: 1px solid var(--amber-border);
+  }
+  .warning-card .card-label { color: var(--amber); }
+  .warning-item {
+    font-size: 13px; color: #fcd34d;
+    padding: 4px 0; line-height: 1.6;
+  }
+
+  /* Disclaimer */
+  .disclaimer {
+    text-align: center;
+    font-size: 11px; color: var(--text-muted);
+    padding: 20px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 12px;
+  }
+
+  /* ── Animations ── */
+  .fade-in {
+    animation: fadeIn 0.5s ease both;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .delay-1 { animation-delay: 0.1s; }
+  .delay-2 { animation-delay: 0.2s; }
+  .delay-3 { animation-delay: 0.3s; }
+  .delay-4 { animation-delay: 0.4s; }
+  .delay-5 { animation-delay: 0.5s; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo-group">
+        <div class="logo">BB</div>
+        <div class="logo-text">
+          <h1>布林通道分析器</h1>
+          <p>Bollinger Bands 智慧圖表分析工具</p>
+        </div>
+      </div>
+      <button class="btn-reset" id="btnReset" onclick="resetAll()">重新上傳</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- Upload -->
+    <div id="uploadZone" class="upload-zone"
+         onclick="document.getElementById('fileInput').click()"
+         ondragover="event.preventDefault(); this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleDrop(event)">
+      <input type="file" id="fileInput" class="file-input" accept="image/*" onchange="handleFile(this.files[0])">
+      <div class="upload-icon">📊</div>
+      <div class="upload-title">拖放布林通道 K 棒圖到此處</div>
+      <div class="upload-sub">或點擊此區域選擇圖片上傳</div>
+      <div class="upload-formats">
+        <span>PNG 圖片</span><span>JPG 圖片</span><span>WEBP 圖片</span><span>GIF 圖片</span>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div id="previewSection" class="preview-section">
+      <div class="preview-card">
+        <img id="previewImg" src="" alt="布林通道K棒圖">
+      </div>
+      <button class="btn-analyze" id="btnAnalyze" onclick="analyze()">🔍 開始分析</button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loadingBox" class="loading">
+      <div class="spinner"></div>
+      <p>AI 正在分析您的圖表，請稍候<span class="loading-dots"></span></p>
+    </div>
+
+    <!-- Error -->
+    <div id="errorBox" class="error-box"></div>
+
+    <!-- Results -->
+    <div id="results" class="results"></div>
+  </main>
+</div>
+
+<script>
+let imageBase64 = null;
+let imageMediaType = null;
+
+function handleDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) handleFile(file);
+}
+
+function handleFile(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    showError('請上傳圖片檔案（支援 PNG、JPG、WEBP 格式）');
+    return;
+  }
+  hideError();
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('results').innerHTML = '';
+
+  const url = URL.createObjectURL(file);
+  document.getElementById('previewImg').src = url;
+  document.getElementById('uploadZone').style.display = 'none';
+  document.getElementById('previewSection').classList.add('show');
+  document.getElementById('btnAnalyze').style.display = 'block';
+  document.getElementById('btnReset').classList.add('show');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    imageBase64 = e.target.result.split(',')[1];
+    imageMediaType = file.type;
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetAll() {
+  imageBase64 = null;
+  imageMediaType = null;
+  document.getElementById('uploadZone').style.display = '';
+  document.getElementById('previewSection').classList.remove('show');
+  document.getElementById('loadingBox').classList.remove('show');
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('btnReset').classList.remove('show');
+  document.getElementById('fileInput').value = '';
+  hideError();
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorBox');
+  el.textContent = '⚠️ ' + msg;
+  el.classList.add('show');
+}
+function hideError() {
+  document.getElementById('errorBox').classList.remove('show');
+}
+
+const PROMPT = `你是一個專業的技術分析師，專精於布林通道(Bollinger Bands)策略。請仔細分析這張K棒圖，並提供以下結構化分析：
+
+請用繁體中文回答，格式如下（請嚴格遵守 JSON 格式）：
+
+{
+  "summary": "對當前走勢的簡短描述（2-3句）",
+  "current_position": "目前價格相對於布林通道的位置描述",
+  "long": {
+    "signal_strength": "強/中/弱",
+    "probability": "0-100 的數字",
+    "entry": "建議做多進場位置描述",
+    "stop_loss": "防守位置（止損）",
+    "target_1": "第一目標位",
+    "target_2": "第二目標位",
+    "risk_reward": "風險報酬比",
+    "reasoning": "做多理由（2-3句）"
+  },
+  "short": {
+    "signal_strength": "強/中/弱",
+    "probability": "0-100 的數字",
+    "entry": "建議做空進場位置描述",
+    "stop_loss": "防守位置（止損）",
+    "target_1": "第一目標位",
+    "target_2": "第二目標位",
+    "risk_reward": "風險報酬比",
+    "reasoning": "做空理由（2-3句）"
+  },
+  "recommendation": "LONG 或 SHORT 或 WAIT",
+  "recommendation_reason": "綜合建議理由（2-3句）",
+  "key_levels": ["關鍵價位1", "關鍵價位2", "關鍵價位3"],
+  "warnings": ["注意事項1", "注意事項2"]
+}
+
+分析時請特別注意：
+1. K棒與布林通道上軌、中軌、下軌的相對位置
+2. 布林通道的寬窄變化（收斂或擴張）
+3. K棒的型態（如吞噬、十字星、錘子等）
+4. 成交量的變化（如果可見）
+5. 趨勢方向與動能
+
+請只回傳 JSON，不要加任何 markdown 格式或其他文字。`;
+
+async function analyze() {
+  if (!imageBase64) return;
+
+  document.getElementById('btnAnalyze').style.display = 'none';
+  document.getElementById('loadingBox').classList.add('show');
+  hideError();
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: imageMediaType, data: imageBase64 }
+            },
+            { type: 'text', text: PROMPT }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message || '介面錯誤，請重試');
+
+    const text = data.content?.map(c => c.type === 'text' ? c.text : '').join('').trim();
+    const clean = text.replace(/```json|```/g, '').trim();
+    const result = JSON.parse(clean);
+    renderResults(result);
+  } catch (err) {
+    console.error(err);
+    showError('分析失敗：' + (err.message || '發生未知錯誤，請重新嘗試'));
+    document.getElementById('btnAnalyze').style.display = 'block';
+  } finally {
+    document.getElementById('loadingBox').classList.remove('show');
+  }
+}
+
+function signalClass(s) {
+  if (s === '強') return 's-strong';
+  if (s === '中') return 's-mid';
+  return 's-weak';
+}
+
+function renderResults(r) {
+  const recClass = r.recommendation === 'LONG' ? 'long' : r.recommendation === 'SHORT' ? 'short' : 'wait';
+  const recIcon = { LONG: '📈', SHORT: '📉', WAIT: '⏳' }[r.recommendation] || '⏳';
+  const recLabel = { LONG: '建議做多', SHORT: '建議做空', WAIT: '建議觀望' }[r.recommendation] || '建議觀望';
+
+  function tradeCardHTML(data, type) {
+    const cls = type === 'long' ? 'long-card' : 'short-card';
+    const icon = type === 'long' ? '🟢' : '🔴';
+    const title = type === 'long' ? '做多策略' : '做空策略';
+    return `
+      <div class="trade-card ${cls}">
+        <div class="trade-header">
+          <div class="trade-title-group">
+            <span class="trade-icon">${icon}</span>
+            <span class="trade-title">${title}</span>
+          </div>
+          <span class="signal-badge ${signalClass(data.signal_strength)}">訊號：${data.signal_strength}</span>
+        </div>
+        <div class="prob-row">
+          <span class="prob-label">預估勝率</span>
+          <span class="prob-value">${data.probability}%</span>
+        </div>
+        <div class="prob-bar"><div class="prob-fill" style="width:${data.probability}%"></div></div>
+        <div class="info-grid">
+          <div class="info-cell"><div class="label">📌 進場位置</div><div class="value">${data.entry}</div></div>
+          <div class="info-cell"><div class="label">🛡️ 防守位置（止損）</div><div class="value defense">${data.stop_loss}</div></div>
+          <div class="info-cell"><div class="label">🎯 第一目標位</div><div class="value">${data.target_1}</div></div>
+          <div class="info-cell"><div class="label">🎯 第二目標位</div><div class="value">${data.target_2}</div></div>
+        </div>
+        <div class="rr-box"><div class="label">📊 風險報酬比</div><div class="value">${data.risk_reward}</div></div>
+        <div class="trade-reasoning">${data.reasoning}</div>
+      </div>`;
+  }
+
+  const levelsHTML = (r.key_levels || []).map(l => `<span class="level-tag">${l}</span>`).join('');
+  const warningsHTML = (r.warnings || []).map(w => `<div class="warning-item">• ${w}</div>`).join('');
+
+  document.getElementById('results').innerHTML = `
+    <div class="rec-banner ${recClass} fade-in">
+      <div class="rec-icon">${recIcon}</div>
+      <div class="rec-label">${recLabel}</div>
+      <div class="rec-reason">${r.recommendation_reason}</div>
+    </div>
+
+    <div class="card fade-in delay-1">
+      <div class="card-label">📋 走勢摘要</div>
+      <p>${r.summary}</p>
+      <p class="dim">${r.current_position}</p>
+    </div>
+
+    <div class="trade-grid fade-in delay-2">
+      ${tradeCardHTML(r.long, 'long')}
+      ${tradeCardHTML(r.short, 'short')}
+    </div>
+
+    ${levelsHTML ? `
+    <div class="card fade-in delay-3">
+      <div class="card-label">📍 關鍵價位</div>
+      <div class="levels-wrap">${levelsHTML}</div>
+    </div>` : ''}
+
+    ${warningsHTML ? `
+    <div class="card warning-card fade-in delay-4">
+      <div class="card-label">⚠️ 注意事項</div>
+      ${warningsHTML}
+    </div>` : ''}
+
+    <div class="disclaimer fade-in delay-5">
+      ⚠️ 此分析僅供參考，不構成投資建議。交易有風險，請自行判斷。
+    </div>
+  `;
+
+  document.getElementById('results').classList.add('show');
+}
+</script>
+</body>
+</html>
